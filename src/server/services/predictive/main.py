@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import pandas as pd
 import json
-import contact
+import rul
+import defects
 
 class Request(BaseModel):
     s1: float = 643.33
@@ -19,19 +20,42 @@ class Request(BaseModel):
     s12: float = 392
     s13: float = 38.86
     s14: float = 23.3787
+    
+    controller_status: str = "normal"
+    lumen: str = "normal"
+    voltage: str = "normal"
+    driver_current: str = "normal"
 
 
 app = FastAPI()
 
 @app.post('/request_tocontact')
 async def contact_stakeholder(request: Request):
-
+    contact = 0
     s_recordings = [request.s1, request.s2, request.s3, request.s4, request.s5, request.s6, request.s7, request.s8, request.s9, request.s10, request.s11, request.s12, request.s13, request.s14]
 
-    rul = contact.get_rul(model = contact.model, s_recordings = s_recordings)
-    response = {"rul": rul[0] , "contact_stakeholder": contact.contact_stakeholder(rul[0])}
-        
-    return response
+    RUL = rul.get_rul(model = rul.model, s_recordings = s_recordings)
+
+    if RUL[0]<= rul.threshold:
+        contact = 1
+
+    statuses = {"controller_status": request.controller_status, "lumen": request.lumen, "voltage": request.voltage, "driver_current": request.driver_current}
+    stat_elem = [stat for stat in statuses.values()]
+  
+    if (all(element == stat_elem[0] for element in stat_elem)) and stat_elem[0] == "normal":
+        state = "in healthy state"
+        response = {"rul": RUL[0] , "contact_stakeholder": contact, "state": state}
+        return response
+
+    else:
+        df = defects.get_defaults(statuses)
+        state = "found defects"
+
+        defect = df.to_json(orient="records")
+        defect = json.loads(defect)
+        contact = 1
+        response = {"rul": RUL[0] , "contact_stakeholder": contact, "state": state, "possible_defects": defect}
+        return response
 
 if __name__ == "__main__":
     # to run type in terminal 'uvicorn main:app' 
