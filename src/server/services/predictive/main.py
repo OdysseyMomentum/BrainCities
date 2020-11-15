@@ -25,7 +25,6 @@ app = FastAPI()
 
 @app.post('/request_tocontact')
 async def contact_stakeholder(request: Request):
-# to post any new job by title, alternateLabels, description and skill, and get the top 5 matches 
 
     s_recordings = [request.s1, request.s2, request.s3, request.s4, request.s5, request.s6, request.s7, request.s8, request.s9, request.s10, request.s11, request.s12, request.s13, request.s14]
 
