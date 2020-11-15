@@ -4,3 +4,5 @@
 
 /src/server/services/odyssey/obj
 /src/server/services/odyssey/bin/Debug/netcoreapp3.1
+
+.DS_Store
