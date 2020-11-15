@@ -38,13 +38,16 @@ async def contact_stakeholder(request: Request):
 
     if RUL[0]<= rul.threshold:
         contact = 1
+        useful_life = "below threshold"
+    else:
+        useful_life = "above threshold"
 
     statuses = {"controller_status": request.controller_status, "lumen": request.lumen, "voltage": request.voltage, "driver_current": request.driver_current}
     stat_elem = [stat for stat in statuses.values()]
   
     if (all(element == stat_elem[0] for element in stat_elem)) and stat_elem[0] == "normal":
         state = "in healthy state"
-        response = {"rul": RUL[0] , "contact_stakeholder": contact, "state": state}
+        response = {"rul": RUL[0], "useful_life": useful_life, "contact_stakeholder": contact, "state": state}
         return response
 
     else:
@@ -54,7 +57,7 @@ async def contact_stakeholder(request: Request):
         defect = df.to_json(orient="records")
         defect = json.loads(defect)
         contact = 1
-        response = {"rul": RUL[0] , "contact_stakeholder": contact, "state": state, "possible_defects": defect}
+        response = {"rul": RUL[0], "useful_life": useful_life, "contact_stakeholder": contact, "state": state, "possible_defects": defect}
         return response
 
 if __name__ == "__main__":
