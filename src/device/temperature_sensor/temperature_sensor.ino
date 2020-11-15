@@ -10,54 +10,43 @@
 #define mqtt_user "<BROKER USER>"  
 #define mqtt_password "<BROKER PASSWORD>" 
 
-#define temperature_topic "sensor/0/temperature"  //Topic température
-#define humidity_topic "sensor/0/humidity"        //Topic humidité
+#define temperature_topic "sensor/0/temperature"  
+#define humidity_topic "sensor/0/humidity"     
+#define sub_topic "dashboard/sensor/0/action"     
 
-//Buffer qui permet de décoder les messages MQTT reçus
+// to decode messages
 char message_buff[100];
 
-long lastMsg = 0;   //Horodatage du dernier message publié sur MQTT
-long lastRecu = 0;
-bool debug = true;  //Affiche sur la console si True
+long lastMsg = 0;   //timestamp of last published message
+long lastRecieved = 0;
+bool debug = true;  
 
 #define LED D2 
-#define DHTPIN D4    // Pin sur lequel est branché le DHT
+#define DHTPIN D4   
 
-// Dé-commentez la ligne qui correspond à votre capteur 
+// Choose one below depending on your component
 //#define DHTTYPE DHT11       // DHT 11 
 #define DHTTYPE DHT22         // DHT 22  (AM2302)
 
-//Création des objets
+
 DHT dht(DHTPIN, DHTTYPE);     
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 void setup() {
-  Serial.begin(9600);     //Facultatif pour le debug
-  pinMode(LED,OUTPUT);     //Pin 2 
-  setup_wifi();           //On se connecte au réseau wifi
-  client.setServer(mqtt_server, 1883);    //Configuration de la connexion au serveur MQTT
-  client.setCallback(callback);  //La fonction de callback qui est executée à chaque réception de message   
+  Serial.begin(9600);     // optional
+  pinMode(LED,OUTPUT);  
+  setup_wifi();           // connect to wifi
+  client.setServer(mqtt_server, 1883);    //configure mqtt connection
+  client.setCallback(callback);  //callback method used when recieving messages
   dht.begin();
-
-  /*sensor_t sensor;
-  dht.temperature().getSensor(&sensor);
-  Serial.println(F("------------------------------------"));
-  Serial.println(F("Temperature Sensor"));
-  Serial.print  (F("Sensor Type: ")); Serial.println(sensor.name);
-  Serial.print  (F("Driver Ver:  ")); Serial.println(sensor.version);
-  Serial.print  (F("Unique ID:   ")); Serial.println(sensor.sensor_id);
-  Serial.print  (F("Max Value:   ")); Serial.print(sensor.max_value); Serial.println(F("°C"));
-  Serial.print  (F("Min Value:   ")); Serial.print(sensor.min_value); Serial.println(F("°C"));
-  Serial.print  (F("Resolution:  ")); Serial.print(sensor.resolution); Serial.println(F("°C"));
-  Serial.println(F("------------------------------------"));*/
 }
 
-//Connexion au réseau WiFi
+//Wifi connection
 void setup_wifi() {
   delay(10);
   Serial.println();
-  Serial.print("Connexion a ");
+  Serial.print("Connecting to ");
   Serial.println(wifi_ssid);
 
   WiFi.begin(wifi_ssid, wifi_password);
@@ -68,25 +57,24 @@ void setup_wifi() {
   }
 
   Serial.println("");
-  Serial.println("Connexion WiFi etablie ");
-  Serial.print("=> Addresse IP : ");
+  Serial.print("IP Address : ");
   Serial.print(WiFi.localIP());
 }
 
-//Reconnexion
+// reconnect
 void reconnect() {
-  //Boucle jusqu'à obtenur une reconnexion
+  // loop until connection is done
   while (!client.connected()) {
     digitalWrite(LED, HIGH);
     delay(500);
-    Serial.print("Connexion au serveur MQTT...");
+    Serial.print("Connecting MQTT server...");
     if (client.connect("sensor_0", mqtt_user, mqtt_password)) {
       Serial.println("OK");
       digitalWrite(LED, HIGH);
     } else {
-      Serial.print("KO, erreur : ");
+      Serial.print("Error : ");
       Serial.print(client.state());
-      Serial.println(" On attend 5 secondes avant de recommencer");
+      Serial.println("Waiting 5 seconds before trying to reconnect.");
       digitalWrite(LED, LOW);
       delay(4500);
     }
@@ -102,47 +90,46 @@ void loop() {
   }
 
   long now = millis();
-  //Envoi d'un message par minute
-  if (now - lastMsg > 100 * 60) {
+  //send a message every minute
+  if (now - lastMsg > 1000 * 60) {
     lastMsg = now;
-    //Lecture de l'humidité ambiante
+    //Read huminity
     float h = dht.readHumidity();
-    // Lecture de la température en Celcius
+    // read temperature Celcius
     float t = dht.readTemperature();
 
-    //Inutile d'aller plus loin si le capteur ne renvoi rien
+    // stop if values are not correct
     if ( isnan(t) || isnan(h)) {
-      Serial.println("Echec de lecture ! Verifiez votre capteur DHT");
+      Serial.println("Error reading, please check DHT sensor");
       return;
     }
   
     if ( debug ) {
       Serial.print("Temperature : ");
       Serial.print(t);
-      Serial.print(" | Humidite : ");
+      Serial.print(" | Humidity : ");
       Serial.println(h);
     }  
     if (client.connected()){
-      client.publish(temperature_topic, String(t).c_str(), true);   //Publie la température sur le topic temperature_topic
-      client.publish(humidity_topic, String(h).c_str(), true);      //Et l'humidité
+      client.publish(temperature_topic, String(t).c_str(), true);   //Publish temperature on topic
+      client.publish(humidity_topic, String(h).c_str(), true);      //Publish humidity on topic
     }
   }
-  if (now - lastRecu > 100 ) {
-    lastRecu = now;
+  if (now - lastRecieved > 100 ) {
+    lastRecieved = now;
     if (client.connected()){
-      client.subscribe("dashboard/sensor/0/action");
+      client.subscribe(sub_topic);
     }
   }
 }
 
-// Déclenche les actions à la réception d'un message
-// D'après http://m2mio.tumblr.com/post/30048662088/a-simple-example-arduino-mqtt-m2mio
+// Triggered action when message is received
 void callback(char* topic, byte* payload, unsigned int length) {
 
   int i = 0;
   if ( debug ) {
-    Serial.println("Message recu =>  topic: " + String(topic));
-    Serial.print(" | longueur: " + String(length,DEC));
+    Serial.println("New message from topic: " + String(topic));
+    Serial.print(" | length: " + String(length,DEC));
   }
   // create character buffer with ending null terminator (string)
   for(i=0; i<length; i++) {
