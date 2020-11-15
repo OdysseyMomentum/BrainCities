@@ -5,10 +5,13 @@ using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Client.Options;
 using MQTTnet.Client.Subscribing;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Odyssey.API.Model;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,20 +28,39 @@ namespace Odyssey.API.Tasks
         private readonly bool mqttSecure = false;
         private readonly int mqttPort;
 
-        //private readonly Dictionary<string, List<DataType>> temperatureQueue;
-        //private readonly Dictionary<string, List<DataType>> humidityQueue;
+        private readonly Dictionary<string, List<SensorData>> queue;
+        private static readonly HttpClient client = new HttpClient();
+        private static readonly DataWalletClient dwClient = new DataWalletClient();
 
         private readonly ILogger<QueueManagerService> logger;
         public QueueManagerService(ILogger<QueueManagerService> logger, IConfiguration configuration)
         {
+            this.queue = new Dictionary<string, List<SensorData>>();
+
             var factory = new MqttFactory();
             mqttClient = factory.CreateMqttClient();
 
-            mqttClient.UseApplicationMessageReceivedHandler(e => { HandleMessageReceived(e.ApplicationMessage); });
+            mqttClient.UseApplicationMessageReceivedHandler(async e => { await HandleMessageReceived(e.ApplicationMessage); });
+            mqttClient.UseDisconnectedHandler(async e => {
+                logger.LogWarning("### DISCONNECTED FROM BROKER ###");
+                while(!mqttClient.IsConnected)
+                {
+                    await Connect();
+                }
+                //subscribe when connected
+                await ExecuteAsync(CancellationToken.None);
+            });
 
-            mqttClient.UseConnectedHandler(/*async*/ e =>
+            mqttClient.UseConnectedHandler(async e =>
             {
                 logger.LogInformation("### CONNECTED WITH BROKER ###");
+                if (await dwClient.AutenticateAsync().ConfigureAwait(false)) {
+                    logger.LogInformation("### CONNECTED WITH BROKER ###");
+                }
+                else
+                {
+                    logger.LogError("Error connecting to DataWallet");
+                }
             });
 
             this.logger = logger;
@@ -50,6 +72,11 @@ namespace Odyssey.API.Tasks
             int i;
             i = Convert.ToInt32(configuration.GetValue("broker_port", "1883"));
             mqttPort = i;
+
+            dwClient.private_key = configuration.GetValue("dw_private_key", "");
+            dwClient.pub_key = configuration.GetValue("dw_public_key", "");
+            dwClient.receiverPublicDefaultKey = configuration.GetValue("dw_receiverPublicDefaultKey", "");
+            dwClient.receiverdefaultFolderId = configuration.GetValue("dw_receiverdefaultFolderId", "");
         }
 
         public async Task<bool> Publish(string channel, string value)
@@ -89,7 +116,8 @@ namespace Odyssey.API.Tasks
             await mqttClient.ConnectAsync(options, CancellationToken.None);
             logger.LogDebug("MQTT: connected");
         }
-        private void HandleMessageReceived(MqttApplicationMessage applicationMessage)
+
+        private async Task HandleMessageReceived(MqttApplicationMessage applicationMessage)
         {
             var data = new SensorData
             {
@@ -115,7 +143,56 @@ namespace Odyssey.API.Tasks
             //Console.WriteLine($"+ Retain = {applicationMessage.Retain}");
             //Console.WriteLine();
 
-            //this.temperatureQueue.Add(data.SensorId, data);
+            var date = DateTime.UtcNow;
+            var previousHour = date.AddMinutes(-1).ToString("yyyyMMddHHmm");
+            var currentHour = $"{date.ToString("yyyyMMddHHmm")}";
+            List<SensorData> currentPool;
+
+            if (this.queue.ContainsKey(currentHour))
+            {
+                currentPool = this.queue[currentHour];
+                currentPool.Add(data);
+            }
+            else
+            {
+                //new hour
+                if (this.queue.ContainsKey(previousHour))
+                {
+                    var previousPool = this.queue[previousHour];
+                    this.queue.Remove(previousHour);
+                    if (previousPool.Count > 0)
+                    {
+                        if (await SendPoolToExternal($"{previousHour}.json" , previousPool)) // send to smartcontract
+                        {
+                            Console.WriteLine($"{previousHour} has been sent to DataWallet");
+                            previousPool = null;
+                        }
+                        else
+                        {
+                            this.queue.Add(previousHour, previousPool);
+                        }
+                    }
+                }
+                currentPool = new List<SensorData>(new[] { data });
+                this.queue.Add(currentHour, currentPool);
+            }
+        }
+
+        private async Task<bool> SendPoolToExternal(string docName, object payload)
+        {
+            //var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");           
+            //var response = await client.PostAsync($"https://smart-contract/documents?docname={docName}", content);
+            //dynamic occ = JsonConvert.DeserializeObject(await response.Content.ReadAsStringAsync());
+            //return response.IsSuccessStatusCode;
+
+            dynamic req = new JObject();
+            req.token = dwClient.Token;
+            req.receiverPublicKey = dwClient.receiverPublicDefaultKey;
+            req.folderId = dwClient.receiverdefaultFolderId;
+            req.fileName = docName;
+            req.jsonData = JsonConvert.SerializeObject(payload);
+
+            return dwClient.AddDocument(req);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
